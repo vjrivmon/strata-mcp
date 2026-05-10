@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "strata-mcp"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Academic research engine as a standalone MCP server: a per-project SQLite library of papers analysed in two rounds, gap analysis, drafts and an arXiv/Semantic Scholar scout — with Claude Code as the reasoning model. No remote LLM, no API keys."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Vicente Rivas Monferrer" }]
 keywords = ["mcp", "claude-code", "research", "academic", "papers", "arxiv", "literature-review", "sqlite", "fts5"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3 :: Only",

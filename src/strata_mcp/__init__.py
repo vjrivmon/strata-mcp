@@ -6,4 +6,4 @@ reasoning model; strata-mcp only stores data, fetches papers and runs searches.
 No remote LLM, no API keys.
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
