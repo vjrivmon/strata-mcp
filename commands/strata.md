@@ -1,44 +1,117 @@
 ---
-description: /strata -- flujo de investigación académica asistida por fases (Setup -> Biblioteca -> Relevancia -> Gap -> Scout -> Lit Review -> Draft -> QA -> Export -> Iteración), espejo de /apex. Usa el servidor MCP strata-mcp.
+description: /strata -- flujo de investigación académica asistida por fases (Setup -> Biblioteca -> Relevancia -> Gap -> Scout -> Lit Review -> Draft -> QA -> Export -> Iteración), espejo de /apex. Usa el servidor MCP strata-mcp; Claude Code es el modelo que razona.
 ---
 
-# /strata -- Flujo de investigación académica por fases
+# /strata — Flujo de investigación académica por fases
 
-> SCAFFOLD — el flujo completo se escribe en las Fases 6-8 (espejo estructural
-> de `/apex`). De momento esto documenta las fases; las instrucciones detalladas
-> por sub-paso llegan cuando core + adapters + tools MCP existan.
+Conduces un proyecto de investigación (un paper o TFG) por fases, igual que
+`/apex` conduce un proyecto de software. **strata-mcp guarda y trae datos; tú
+razonas.** El análisis masivo de papers se delega a subagentes Haiku; el
+razonamiento pesado (gap, draft, lit review, ranking del scout, QA) lo haces tú
+en la sesión (Opus/Sonnet).
 
 ## Paso cero
 
-`ToolSearch("strata")` para cargar las tools `mcp__strata__strata_*`. Si no
-aparecen, avisar de que hay que registrar el servidor (`scripts/install.sh`).
-
-## Detección
-
-- `strata_get_status` → ¿existe `.strata/strata.db` en el cwd? ¿qué proyectos
-  hay? ¿en qué fase está cada uno?
-- Si no existe → Fase 0 (Setup). Si existe → continuar desde la fase pendiente.
+1. `ToolSearch("strata")` para cargar las tools `mcp__strata__strata_*`. Si no
+   aparecen → avisa de que hay que registrar el servidor (`scripts/install.sh`
+   del repo strata-mcp) y reiniciar Claude Code; para aquí.
+2. `strata_init_project()` — asegura `./.strata/strata.db`. Si devuelve `ok:false`
+   → muestra el error (BD corrupta, falta FTS5, disco lleno...) y para.
+3. `strata_get_status()` — ¿qué proyectos hay y en qué fase está cada uno?
+   - Sin proyectos → Fase 0 (Setup).
+   - Hay proyectos → pregunta cuál (o usa el único) y continúa **desde la
+     primera fase no completada**. Las fases son secuenciales; no preguntes
+     "¿cuál primero?".
 
 ## Las fases
 
-| # | Fase | Qué hace | Quién razona |
-|---|---|---|---|
-| 0 | Setup | Definir proyecto: research question, dominio, template, repo_url opcional. Crear `.strata/`. | Claude (mini-socrático) |
-| 1 | Biblioteca | Encolar papers (URL/DOI/PDF/local). Subagentes Haiku drenan la cola: fetch texto → Round1 → Round2 → guardar. Batch (`STRATA_INGEST_BATCH`). | Subagentes Haiku (skill `analyze-paper`) |
-| 2 | Relevancia | Por paper × proyecto: `context_analysis`. | Claude (skill `relevance-analysis`) |
-| 3 | Gap analysis | Cruzar todos los Round2 + context + research question (+ repo) → gap estructurado. | Claude (skill `gap-analysis`) |
-| 4 | Scout | 6 queries → buscar arXiv + Semantic Scholar → rankear 0-10 → guardar candidatos. Aprobar → re-encola a Fase 1. | Claude (skill `scout`) |
-| 5 | Lit Review | Redactar related work / estado del arte desde la biblioteca. | Claude (skill `literature-review`) |
-| 6 | Draft | Redactar el paper sección a sección. Citas SOLO de la biblioteca + filtro post-generación. | Claude (skill `draft-paper`) |
-| 7 | QA | Verificar cada cita, anti-alucinación, formato de refs según template. | Claude (skill `citation-qa`) |
-| 8 | Export | Generar `.tex`/`.md` final con bibliografía según template. | Claude |
-| 9 | Iteración | Añadir papers, regenerar secciones, re-scout. | — |
+| # | Fase | Qué hace | Quién razona | Tools / skill |
+|---|---|---|---|---|
+| 0 | Setup | Definir el proyecto. | Claude (mini-socrático) | `strata_create_project` |
+| 1 | Biblioteca | Encolar papers y drenar la cola con subagentes Haiku. | Subagentes Haiku | skill `analyze-paper` |
+| 2 | Relevancia | `context_analysis` por paper × proyecto. | Claude | skill `relevance-analysis` (v1), `strata_save_context` |
+| 3 | Gap | Cruzar Round2 + context + research_question (+ repo) → gap. | Claude | skill `gap-analysis`, `strata_save_gap` |
+| 4 | Scout | Diseñar queries → buscar arXiv → rankear → candidatos. | Claude | skill `scout`, `strata_search_arxiv`, `strata_save_candidates` |
+| 5 | Lit Review | Related work / estado del arte desde la biblioteca. | Claude | skill `literature-review` (v1), `strata_save_literature_review` |
+| 6 | Draft | Redactar el paper sección a sección. | Claude | skill `draft-paper`, `strata_save_draft` |
+| 7 | QA | Verificar citas, anti-alucinación, formato de refs. | Claude | skill `citation-qa` (v1) |
+| 8 | Export | Generar `.tex`/`.md` final con bibliografía según template. | Claude | `strata_get_latest_draft` + escribir archivo |
+| 9 | Iteración | Añadir papers, regenerar secciones, re-scout. | — | — |
+
+Marca cada fase con `strata_set_phase(project_id, N, "in_progress")` al empezarla
+y `"completed"` al cerrarla; eso es lo que `strata_get_status` lee para saber
+dónde retomar.
+
+### Fase 0 — Setup
+
+Mini-socrático breve (3-5 preguntas, no más): ¿de qué va el proyecto? ¿cuál es
+la **research question** exacta? ¿dominio/subcampo? ¿qué **template** (LNCS, IEEE,
+ACM, INTED, generic)? ¿hay un **repo** asociado (`repo_url`)? Con eso:
+`strata_create_project(name, description, research_question, template, repo_url)`.
+Guarda el `id` devuelto — es el `project_id` de aquí en adelante.
+`strata_set_phase(project_id, 0, "completed")`, `strata_set_phase(project_id, 1, "in_progress")`.
+
+### Fase 1 — Biblioteca
+
+1. Pregunta al usuario qué papers añadir: ids/URLs de arXiv, URLs de PDF, rutas a
+   PDFs locales. `strata_queue_papers(project_id, urls=[...], hint="arxiv"|"pdf"|None)`
+   — los duplicados (por URL normalizada) contra ítems aún activos se ignoran.
+2. **Drenar la cola con subagentes Haiku** (la herencia de MCP en subagentes
+   está confirmada — Plan A). Mira `strata_queue_status(project_id)`; si hay
+   `pending`, lanza un lote de subagentes con la **Task tool, `model="haiku"`,
+   en paralelo** (tantos como ítems pendientes, hasta un máximo razonable —
+   `STRATA_INGEST_BATCH`, por defecto ~5). A cada subagente dale **la skill
+   `analyze-paper`** como instrucción y un `worker_id` único. Cada subagente:
+   `strata_dequeue_paper` → `strata_fetch_paper_text` → Round1 → `strata_save_paper`
+   → `strata_save_paper_analysis(round1=...)` → Round2 → `strata_save_paper_analysis(round2=...)`
+   → `strata_mark_ingested`. Si un paper falla → `strata_mark_failed` (se reintenta solo).
+3. "Poco a poco": si quedan ítems `pending` tras el lote, dile al usuario cuántos
+   y que con volver a invocar `/strata` se drena el siguiente lote. La cola
+   persiste entre sesiones.
+4. Cuando `pending == 0 && processing == 0` y hay al menos unos cuantos papers
+   en la biblioteca (`strata_list_papers`): `strata_set_phase(project_id, 1, "completed")`.
+
+### Fases 2-5 (resumen)
+
+- **2 Relevancia** *(v1: la skill `relevance-analysis` es un stub)*: para cada
+  paper, tú produces `{contribution_to_project, gaps_covered[], gaps_not_covered[], relevance_score}`
+  a partir de su Round2 + la `research_question`, y `strata_save_context(...)`.
+- **3 Gap**: aplica la skill **`gap-analysis`**. Termina en `strata_save_gap`.
+- **4 Scout**: aplica la skill **`scout`** *(v1: solo arXiv; Semantic Scholar y
+  la introspección de repo llegan después)*. `strata_search_arxiv` → rankea →
+  `strata_save_candidates`. El usuario aprueba/rechaza:
+  `strata_approve_candidate` (re-encola a Fase 1) / `strata_reject_candidate`.
+- **5 Lit Review** *(v1: skill stub)*: related work desde la biblioteca →
+  `strata_save_literature_review`.
+
+### Fase 6 — Draft
+
+Aplica la skill **`draft-paper`**: sección a sección (`introduction`,
+`related_work`, `methodology`, `results`, `discussion`, `conclusion`, y por
+último `abstract`), cada una con `strata_save_draft(section=...)`. Filtro
+anti-alucinación obligatorio: solo citas a papers de la biblioteca. Al terminar,
+`strata_set_phase(project_id, 6, "completed")`.
+
+### Fases 7-9 (resumen)
+
+- **7 QA** *(v1: skill `citation-qa` stub)*: revisa el último draft contra la
+  biblioteca y el template; reporta citas colgantes, cifras no trazables, formato
+  incorrecto. No "arregles" el draft, repórtalo y deja que el usuario decida.
+- **8 Export**: `strata_get_latest_draft(project_id)` → conviértelo al formato
+  del template (refs numéricas IEEE/ACM, autor-año LNCS/INTED) y escribe el
+  `.tex`/`.md` final en el directorio del proyecto, con su bibliografía.
+- **9 Iteración**: encolar papers nuevos (vuelta a Fase 1), regenerar secciones,
+  re-scout. Las versiones de gap/lit-review/draft son append-only.
 
 ## Reglas
 
-- Sin emojis en ningún output.
-- El razonamiento pesado (gap, draft, lit review, ranking del scout, QA) lo hace
-  la sesión de Claude Code (Opus/Sonnet). El análisis masivo de papers lo hacen
-  subagentes Haiku vía la cola. strata-mcp no lleva LLM.
-- Conventional commits si el directorio de investigación es un repo.
-- Las fases son secuenciales; no preguntar "cuál primero".
+- **Sin emojis** en ningún output.
+- strata-mcp no lleva LLM ni API key: el cerebro eres tú (Opus/Sonnet) y los
+  subagentes Haiku para el análisis masivo. No introduzcas Ollama/VRAIN ni
+  llames a la API de Anthropic.
+- Si el directorio del proyecto es un repo git: conventional commits en los
+  cambios significativos (el `.tex` exportado, etc.).
+- Las fases son secuenciales. Marca `strata_set_phase` al empezar y al cerrar
+  cada una.
+- Anti-alucinación en todo lo que se redacta (gap, lit review, draft): solo se
+  cita lo que está en la biblioteca; no se inventan cifras, autores ni resultados.
