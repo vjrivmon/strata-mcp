@@ -7,12 +7,15 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-![Status: pre-alpha (scaffold)](https://img.shields.io/badge/status-pre--alpha-orange.svg)
+![Status: alpha (MVP)](https://img.shields.io/badge/status-alpha-orange.svg)
 
-> **Heads up — this repo is a scaffold.** The architecture, data model, edge
-> cases and project layout are done; the implementation is in progress
-> (phases 6+). It is not usable yet. Issues and PRs are very welcome — see
-> [CONTRIBUTING.md](CONTRIBUTING.md).
+> **Heads up — early MVP.** The core engine works: the SQLite+FTS5 library, the
+> ingest queue, the arXiv source, the `strata_*` MCP tools, the installer and the
+> `/strata` command are implemented and tested. Some skills
+> (`relevance-analysis`, `literature-review`, `scout`, `citation-qa`) and some
+> sources (Semantic Scholar, web scraper, repo introspection), the paper
+> templates and the Supabase migration are still stubs. Issues and PRs are very
+> welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -51,9 +54,6 @@ you ── /strata ──▶ Claude Code ──▶ strata-mcp ──▶ ./.strat
 ```
 
 ## Quickstart
-
-> Works once the MCP server is implemented (phases 6-8); for now `install.sh`
-> only sets up the venv.
 
 ```bash
 git clone https://github.com/vjrivmon/strata-mcp.git

@@ -93,25 +93,45 @@ Supabase → SQLite, v1).
   active `(project_id, url_normalized)`.
 - `fetch_paper_text` returns `raw_text` *and* `raw_text_truncated` (sized for a
   Haiku context window). Round 1 and round 2 are saved separately.
-- SQLite: `journal_mode=WAL` + `busy_timeout`, `quick_check` on open, FTS5
-  availability probed on init, `papers_fts`/`analyses_fts` kept in sync by AFTER
-  triggers, `strata_search` sanitises the FTS5 query, `raw_text` sanitised
-  (NUL/control chars, NFKC) before storage, append-only `version` computed in a
-  transaction, `schema_version` in `project_meta` + idempotent migrations, every
-  paper/gap/draft/candidate query scoped by `project_id`.
-- PDF extractor: path checks, `%PDF-` magic, size cap, "scanned PDF" detection
-  (too little text → hard fail, no OCR), encrypted → hard fail.
+- SQLite: `journal_mode=WAL` + `busy_timeout` + `foreign_keys=ON`, `quick_check`
+  on open, FTS5 availability probed on init, `papers_fts`/`analyses_fts` are
+  plain FTS5 tables rebuilt per row on `save_paper`/`save_paper_analysis` (not
+  external-content + triggers — decision #16), `strata_search` turns the query
+  into quoted `\w+` tokens so FTS5 operators can't leak in, `raw_text`/abstracts
+  sanitised (NUL/control chars, NFKC, whitespace) before storage, append-only
+  `version` computed in a `BEGIN IMMEDIATE` transaction, `schema_version` in
+  `project_meta` + idempotent migration scaffold, every paper/gap/draft/candidate
+  query scoped by `project_id`.
+- PDF extractor: path checks, `%PDF-` magic, size cap (`STRATA_MAX_PDF_MB`),
+  "scanned PDF" detection (too little text → hard fail, no OCR), encrypted → hard fail.
 
-## Open question to resolve early (phase 5/6 spike)
+## The Haiku-subagent MCP question — resolved (Plan A)
 
-Do `Task(model="haiku")` subagents inherit the session's MCP servers (i.e. can
-they call `mcp__strata__strata_*`)? If yes → subagents call the tools directly
-(Plan A). If no → subagents receive the text in the prompt and *return* the
-round-1/round-2 JSON; the orchestrator (main session) does the `strata_*` writes
-(Plan B). The `analyze-paper` skill is written to work either way.
+`Task(model="haiku")` subagents **do** inherit the session's MCP servers: a
+probe subagent saw the full `mcp__strata__strata_*` suite and could call
+`strata_health`. So the `analyze-paper` skill is written for **Plan A** — the
+subagent drives the ingest queue directly (`strata_dequeue_paper` →
+`strata_fetch_paper_text` → round 1 → `strata_save_paper` →
+`strata_save_paper_analysis` → round 2 → ... → `strata_mark_ingested`). It still
+documents a "directed" fallback (subagent returns the JSON as text, orchestrator
+persists) for when you want to drive it from the main session. (APEX decision #15.)
 
 ## Status
 
-Scaffold (phase 5 of the /apex flow). Structure, schema and stubs are in place;
-nothing is implemented yet. Next: phase 6 (core) → phase 7 (adapters) → phase 8
-(integration / wire up the MCP tools) → phase 9 (tests, ≥80% on core).
+`/apex` phases 0-8 done. **Core** (`core/*`): dedupe keys, entity validation +
+factories, phase catalogue — 100% test coverage. **Adapters**: `sqlite_storage`
+(full `IStorage` — schema, migrations, WAL, FTS5 search, atomic ingest queue,
+versioned artefacts), `arxiv` (id parsing, Atom API metadata, PDF full text,
+retry/backoff), `pdf_extractor` (defensive PDF → text). `semantic_scholar` /
+`web_scraper` / `github_repo` are still v1 stubs. **Server**: FastMCP stdio
+server exposing 33 `strata_*` tools, storage wired from `$STRATA_DB`.
+**install.sh**: venv + register the MCP server in `~/.claude.json` + symlink
+skills/command (idempotent). **`commands/strata.md`**: the real phased flow.
+**Skills**: `analyze-paper`, `gap-analysis`, `draft-paper` are real; the other
+four (`relevance-analysis`, `literature-review`, `scout`, `citation-qa`) are v1
+placeholders. ~119 tests pass; CI (ruff + pytest, py3.10/3.12) green. Templates
+(`templates/{lncs,ieee,acm,inted,generic}/`) and `scripts/migrate_supabase.py`
+are still empty/stub (v1). Pending: a live multi-agent E2E in a fresh registered
+session; phase 9 (raise coverage on adapters/server); phases 10-11 (security
+review, release/tag); v1 (the stub adapters + skills, templates, the Supabase
+migration, hub integration).
