@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 from strata_mcp.core.dedupe import normalize_arxiv_id
@@ -20,7 +21,7 @@ from strata_mcp.core.ports import FetchedPaper, IPaperSource, SearchHit, SearchR
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}"
-_USER_AGENT = "strata-mcp/0.1 (+https://github.com/vjrivmon/strata-mcp)"
+_BASE_USER_AGENT = "strata-mcp/0.1 (+https://github.com/vjrivmon/strata-mcp)"
 _RETRIES = 3
 _BACKOFF_BASE = 1.5
 
@@ -35,14 +36,29 @@ def parse_arxiv_id(ref: str) -> str | None:
     return normalize_arxiv_id(ref)
 
 
-def _http_get(url: str, params: dict | None = None, *, timeout: float = 30.0) -> bytes:
+def user_agent() -> str:
+    """The HTTP User-Agent, with ``STRATA_CONTACT_EMAIL`` appended if set
+    (arXiv / Semantic Scholar ask for a contact; it helps avoid rate limiting)."""
+    email = (os.environ.get("STRATA_CONTACT_EMAIL") or "").strip()
+    return f"{_BASE_USER_AGENT} (mailto:{email})" if email else _BASE_USER_AGENT
+
+
+def _http_timeout() -> float:
+    try:
+        return max(1.0, float(os.environ.get("STRATA_HTTP_TIMEOUT", 30.0)))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _http_get(url: str, params: dict | None = None, *, timeout: float | None = None) -> bytes:
     import httpx
 
+    timeout = _http_timeout() if timeout is None else timeout
     last_exc: Exception | None = None
     for attempt in range(_RETRIES):
         try:
             with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-                resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
+                resp = client.get(url, params=params, headers={"User-Agent": user_agent()})
             if resp.status_code in (429, 500, 502, 503, 504):
                 raise httpx.HTTPStatusError("retryable status", request=resp.request, response=resp)
             resp.raise_for_status()

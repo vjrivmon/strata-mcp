@@ -261,9 +261,11 @@ def _loads(text: str | None) -> Any:
 
 def _fts_match_expr(query: str) -> str:
     """Turn a free-text query into a safe FTS5 MATCH expression: each ``\\w+``
-    run becomes a quoted phrase ANDed with the rest. Empty -> ``""``."""
+    run becomes a quoted phrase, ``OR``-ed with the rest, so a multi-word query
+    surfaces anything related and bm25 does the ranking (a strict ``AND`` would
+    miss a paper that only matches three of four terms). Empty -> ``""``."""
     tokens = _WORD.findall(query or "")
-    return " ".join(f'"{t}"' for t in tokens)
+    return " OR ".join(f'"{t}"' for t in tokens)
 
 
 def _round1_fts_text(r1: Round1Analysis | None) -> str:
