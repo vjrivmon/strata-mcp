@@ -1,20 +1,42 @@
 """Domain entities for strata-mcp.
 
-Plain dataclasses mirroring the ``.strata/strata.db`` schema (see the data-model
-in the project wiki). No persistence logic here — adapters map these to/from
+Dataclasses mirroring the ``.strata/strata.db`` schema (see the data-model in
+the project wiki). No persistence logic here — adapters map these to/from
 SQLite. JSON-shaped fields (analysis rounds, context analysis, repo layers) are
 kept as ``dict`` and serialised by the storage adapter.
 
-Scaffold note: fields are defined; behaviour (validation, factories) lands in
-phase 6.
+What *does* live here, beyond the fields:
+
+* light ``__post_init__`` validation — enum-string coercion (so a row loaded
+  from SQLite, where ``source`` is the text ``"arxiv"``, becomes the enum) and
+  range checks on the ``*_score`` fields (0-10);
+* ``create()`` factory classmethods on the entities that own a public id
+  (``Project``, ``Paper``, ``Candidate``) — they mint the id, normalise the
+  author list and reject empty/unknown values, so callers never hand-roll one.
 """
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+# Paper templates the export phase knows how to render.
+VALID_TEMPLATES: tuple[str, ...] = ("lncs", "ieee", "acm", "inted", "generic")
+
+# Sections a draft may be scoped to (``None`` = the whole paper).
+VALID_DRAFT_SECTIONS: tuple[str, ...] = (
+    "abstract",
+    "introduction",
+    "related_work",
+    "methodology",
+    "results",
+    "discussion",
+    "conclusion",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -64,9 +86,99 @@ class ResearchPhase(int, Enum):
     ITERATION = 9
 
 
-def _now() -> str:
+# --------------------------------------------------------------------------- #
+# Small validators / coercers shared by entities and the storage adapter
+# --------------------------------------------------------------------------- #
+def now_iso() -> str:
     """ISO-8601 UTC timestamp used for ``*_at`` columns."""
     return datetime.now(timezone.utc).isoformat()
+
+
+# Backwards-friendly alias used by the default_factory below.
+_now = now_iso
+
+
+def new_id() -> str:
+    """A fresh opaque identifier for a ``Project`` / ``Paper`` / ``Candidate``
+    (32-char hex; collision-free for any realistic library size)."""
+    return uuid.uuid4().hex
+
+
+def coerce_score(value: object, *, field_name: str = "score") -> float | None:
+    """Return ``value`` as a float in ``[0, 10]``; ``None`` passes through.
+
+    Raises :class:`ValueError` for a non-numeric or out-of-range value — scores
+    are always produced by us (relevance analyses, scout ranking), so a bad one
+    is a bug worth surfacing rather than silently clamping.
+    """
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a number, got {value!r}") from exc
+    if v != v or not (0.0 <= v <= 10.0):  # v != v catches NaN
+        raise ValueError(f"{field_name} must be within [0, 10], got {v}")
+    return v
+
+
+def coerce_year(value: object) -> int | None:
+    """Return ``value`` as a plausible publication year, or ``None``."""
+    if value is None:
+        return None
+    try:
+        y = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return y if 1500 <= y <= 2200 else None
+
+
+def normalize_authors(authors: Iterable[str] | str | None) -> list[str]:
+    """Trim, drop empties and de-duplicate (order-preserving) an author list.
+
+    Accepts a single string (treated as one author), an iterable of strings, or
+    ``None``.
+    """
+    if authors is None:
+        return []
+    if isinstance(authors, str):
+        authors = [authors]
+    seen: set[str] = set()
+    out: list[str] = []
+    for a in authors:
+        if a is None:
+            continue
+        name = str(a).strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append(name)
+    return out
+
+
+def _require_nonblank(value: str | None, field_name: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} is required and cannot be blank")
+    return text
+
+
+def _coerce_template(value: str | None) -> str:
+    t = (value or "generic").strip().lower()
+    if t not in VALID_TEMPLATES:
+        raise ValueError(f"unknown template {t!r}; valid: {', '.join(VALID_TEMPLATES)}")
+    return t
+
+
+def _coerce_section(value: str | None) -> str | None:
+    if value is None:
+        return None
+    s = value.strip().lower()
+    if not s:
+        return None
+    if s not in VALID_DRAFT_SECTIONS:
+        raise ValueError(f"unknown draft section {s!r}; valid: {', '.join(VALID_DRAFT_SECTIONS)}")
+    return s
 
 
 # --------------------------------------------------------------------------- #
@@ -83,6 +195,30 @@ class Project:
     template: str = "generic"  # lncs | ieee | acm | inted | generic
     repo_url: str | None = None
     created_at: str = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        self.id = _require_nonblank(self.id, "project id")
+        self.name = _require_nonblank(self.name, "project name")
+        self.template = _coerce_template(self.template)
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        *,
+        description: str | None = None,
+        research_question: str | None = None,
+        template: str = "generic",
+        repo_url: str | None = None,
+    ) -> Project:
+        return cls(
+            id=new_id(),
+            name=name,
+            description=description,
+            research_question=research_question,
+            template=template,
+            repo_url=repo_url,
+        )
 
 
 @dataclass
@@ -116,6 +252,42 @@ class Paper:
     source: PaperSource = PaperSource.UNKNOWN
     ingested_at: str = field(default_factory=_now)
 
+    def __post_init__(self) -> None:
+        self.id = _require_nonblank(self.id, "paper id")
+        self.title = _require_nonblank(self.title, "paper title")
+        self.authors = normalize_authors(self.authors)
+        self.year = coerce_year(self.year)
+        self.source = PaperSource(self.source)
+
+    @classmethod
+    def create(
+        cls,
+        title: str,
+        *,
+        doi: str | None = None,
+        arxiv_id: str | None = None,
+        authors: Iterable[str] | str | None = None,
+        year: object = None,
+        venue: str | None = None,
+        url: str | None = None,
+        abstract: str | None = None,
+        raw_text: str | None = None,
+        source: PaperSource | str = PaperSource.UNKNOWN,
+    ) -> Paper:
+        return cls(
+            id=new_id(),
+            title=title,
+            doi=doi,
+            arxiv_id=arxiv_id,
+            authors=normalize_authors(authors),
+            year=coerce_year(year),
+            venue=venue,
+            url=url,
+            abstract=abstract,
+            raw_text=raw_text,
+            source=PaperSource(source),
+        )
+
 
 @dataclass
 class Round1Analysis:
@@ -125,6 +297,12 @@ class Round1Analysis:
     relevance_score: float | None = None  # 0-10
     worth_reading: bool | None = None
     summary_es: str | None = None
+
+    def __post_init__(self) -> None:
+        self.bullets = [
+            str(b).strip() for b in (self.bullets or []) if b is not None and str(b).strip()
+        ]
+        self.relevance_score = coerce_score(self.relevance_score, field_name="relevance_score")
 
 
 @dataclass
@@ -152,6 +330,9 @@ class PaperAnalysis:
     model_used: str | None = None
     analyzed_at: str | None = None
 
+    def __post_init__(self) -> None:
+        self.paper_id = _require_nonblank(self.paper_id, "paper_id")
+
 
 @dataclass
 class PaperProject:
@@ -163,6 +344,11 @@ class PaperProject:
     # shape: {contribution_to_project, gaps_covered[], gaps_not_covered[]}
     relevance_score: float | None = None  # 0-10, in this project's context
     added_at: str = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        self.paper_id = _require_nonblank(self.paper_id, "paper_id")
+        self.project_id = _require_nonblank(self.project_id, "project_id")
+        self.relevance_score = coerce_score(self.relevance_score, field_name="relevance_score")
 
 
 @dataclass
@@ -181,6 +367,12 @@ class IngestQueueItem:
     error: str | None = None
     queued_at: str = field(default_factory=_now)
     processed_at: str | None = None
+
+    def __post_init__(self) -> None:
+        self.project_id = _require_nonblank(self.project_id, "project_id")
+        self.url = _require_nonblank(self.url, "url")
+        self.status = IngestStatus(self.status)
+        self.attempts = max(0, int(self.attempts))
 
 
 @dataclass
@@ -214,8 +406,11 @@ class Draft:
     project_id: str
     version: int
     content_md: str
-    section: str | None = None  # intro|related_work|methodology|results|...
+    section: str | None = None  # abstract|introduction|related_work|...
     created_at: str = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        self.section = _coerce_section(self.section)
 
 
 @dataclass
@@ -238,6 +433,44 @@ class Candidate:
     source: PaperSource = PaperSource.UNKNOWN
     scouted_at: str = field(default_factory=_now)
 
+    def __post_init__(self) -> None:
+        self.id = _require_nonblank(self.id, "candidate id")
+        self.project_id = _require_nonblank(self.project_id, "project_id")
+        self.title = _require_nonblank(self.title, "candidate title")
+        self.authors = normalize_authors(self.authors)
+        self.relevance_score = coerce_score(self.relevance_score, field_name="relevance_score")
+        self.status = CandidateStatus(self.status)
+        self.source = PaperSource(self.source)
+
+    @classmethod
+    def create(
+        cls,
+        project_id: str,
+        title: str,
+        *,
+        abstract: str | None = None,
+        authors: Iterable[str] | str | None = None,
+        arxiv_id: str | None = None,
+        doi: str | None = None,
+        url: str | None = None,
+        relevance_score: object = None,
+        relevance_reason: str | None = None,
+        source: PaperSource | str = PaperSource.UNKNOWN,
+    ) -> Candidate:
+        return cls(
+            id=new_id(),
+            project_id=project_id,
+            title=title,
+            abstract=abstract,
+            authors=normalize_authors(authors),
+            arxiv_id=arxiv_id,
+            doi=doi,
+            url=url,
+            relevance_score=coerce_score(relevance_score, field_name="relevance_score"),
+            relevance_reason=relevance_reason,
+            source=PaperSource(source),
+        )
+
 
 @dataclass
 class RepoSnapshot:
@@ -250,3 +483,7 @@ class RepoSnapshot:
     # shape: {layer1:{readme,tree,pending}, layer2:{agents[]},
     #         layer3:{benchmarks[],metrics}, layer4:{datasets[],configs}}
     scanned_at: str = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        self.project_id = _require_nonblank(self.project_id, "project_id")
+        self.repo_url = _require_nonblank(self.repo_url, "repo_url")

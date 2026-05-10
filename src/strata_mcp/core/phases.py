@@ -1,9 +1,9 @@
 """The ``/strata`` research workflow phases (mirrors the apex phase pattern).
 
 Each research project tracks its progress through these phases in the ``phases``
-table. This module is the single source of truth for phase numbers and names.
-
-Scaffold note: the catalogue is real; ``advance``/validation helpers are stubs.
+table. This module is the single source of truth for phase numbers and names —
+look-ups, the seed rows for a new project, and the small "what comes next"
+helper the ``/strata`` command uses.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from strata_mcp.core.entities import ResearchPhase
 
-VALID_STATUSES = ("pending", "in_progress", "completed", "skipped")
+VALID_STATUSES: tuple[str, ...] = ("pending", "in_progress", "completed", "skipped")
 
 
 @dataclass(frozen=True)
@@ -77,16 +77,29 @@ RESEARCH_PHASES: tuple[PhaseDef, ...] = (
     PhaseDef(9, "iteration", "Iteration", "Add papers, regenerate sections, re-scout."),
 )
 
-_BY_NUMBER = {p.number: p for p in RESEARCH_PHASES}
+_BY_NUMBER: dict[int, PhaseDef] = {p.number: p for p in RESEARCH_PHASES}
+_BY_KEY: dict[str, PhaseDef] = {p.key: p for p in RESEARCH_PHASES}
+FIRST_PHASE: int = RESEARCH_PHASES[0].number
+LAST_PHASE: int = RESEARCH_PHASES[-1].number
 
 
 def phase_def(number: int) -> PhaseDef:
-    """Look up a phase definition, or raise ``ValueError`` for an unknown number."""
+    """Look up a phase definition by number, or raise ``ValueError``."""
     try:
         return _BY_NUMBER[number]
     except KeyError as exc:
         valid = ", ".join(str(p.number) for p in RESEARCH_PHASES)
         raise ValueError(f"unknown phase {number!r}; valid phases: {valid}") from exc
+
+
+def phase_by_key(key: str) -> PhaseDef:
+    """Look up a phase definition by its short key (``"setup"``, ``"draft"`` …),
+    or raise ``ValueError``."""
+    try:
+        return _BY_KEY[key]
+    except KeyError as exc:
+        valid = ", ".join(p.key for p in RESEARCH_PHASES)
+        raise ValueError(f"unknown phase key {key!r}; valid keys: {valid}") from exc
 
 
 def is_valid_phase(number: int) -> bool:
@@ -97,17 +110,22 @@ def is_valid_status(status: str) -> bool:
     return status in VALID_STATUSES
 
 
+def next_phase(number: int) -> PhaseDef | None:
+    """The phase after ``number`` in workflow order, or ``None`` past the end.
+    Raises ``ValueError`` for an unknown ``number``."""
+    phase_def(number)  # validates
+    return _BY_NUMBER.get(number + 1)
+
+
 def initial_phases(project_id: str) -> list[dict]:
-    """Rows to seed the ``phases`` table when a project is created (all pending,
-    phase 0 in progress)."""
-    rows: list[dict] = []
-    for p in RESEARCH_PHASES:
-        rows.append(
-            {
-                "project_id": project_id,
-                "phase_number": p.number,
-                "name": p.name,
-                "status": "in_progress" if p.number == ResearchPhase.SETUP else "pending",
-            }
-        )
-    return rows
+    """Rows to seed the ``phases`` table when a project is created (all
+    ``pending``, except ``Setup`` which starts ``in_progress``)."""
+    return [
+        {
+            "project_id": project_id,
+            "phase_number": p.number,
+            "name": p.name,
+            "status": "in_progress" if p.number == ResearchPhase.SETUP else "pending",
+        }
+        for p in RESEARCH_PHASES
+    ]

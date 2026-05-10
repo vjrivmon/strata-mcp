@@ -1,6 +1,7 @@
-"""Smoke tests for the scaffold: imports resolve, the phase catalogue is
-consistent, and the dedupe normalisers behave. Real coverage (core, storage,
-queue) lands in phase 9."""
+"""Smoke tests: the package imports cleanly (incl. every adapter and the server
+module) and exposes a version. Focused unit coverage of the core lives in
+``test_dedupe.py`` / ``test_entities.py`` / ``test_phases.py``; storage + queue
+land with the adapter in phase 7."""
 
 from __future__ import annotations
 
