@@ -89,10 +89,14 @@ Supabase → SQLite, v1).
 ## Hardening baked into the design (see EDGE-CASES wiki)
 
 - Ingest queue: atomic `dequeue_paper` (`BEGIN IMMEDIATE` + claim one pending
-  row), stale-`processing` reclaim (dead worker), `attempts` cap, UNIQUE on
-  active `(project_id, url_normalized)`.
+  row), stale-`processing` reclaim (dead worker), `attempts` cap (+ a `permanent`
+  flag on `mark_failed` for hard 404s / not-a-paper), UNIQUE on active
+  `(project_id, url_normalized)`.
 - `fetch_paper_text` returns `raw_text` *and* `raw_text_truncated` (sized for a
-  Haiku context window). Round 1 and round 2 are saved separately.
+  Haiku context window). For queue draining, `fetch_and_stage(queue_id)` stages
+  the full `raw_text` on the queue row and returns only the truncated version —
+  `save_paper(from_queue_id=...)` recovers it, `mark_ingested` clears it — so a
+  subagent never round-trips the big text. Round 1 and round 2 are saved separately.
 - SQLite: `journal_mode=WAL` + `busy_timeout` + `foreign_keys=ON`, `quick_check`
   on open, FTS5 availability probed on init, `papers_fts`/`analyses_fts` are
   plain FTS5 tables rebuilt per row on `save_paper`/`save_paper_analysis` (not
@@ -111,27 +115,32 @@ Supabase → SQLite, v1).
 probe subagent saw the full `mcp__strata__strata_*` suite and could call
 `strata_health`. So the `analyze-paper` skill is written for **Plan A** — the
 subagent drives the ingest queue directly (`strata_dequeue_paper` →
-`strata_fetch_paper_text` → round 1 → `strata_save_paper` →
-`strata_save_paper_analysis` → round 2 → ... → `strata_mark_ingested`). It still
-documents a "directed" fallback (subagent returns the JSON as text, orchestrator
-persists) for when you want to drive it from the main session. (APEX decision #15.)
+`strata_fetch_and_stage(queue_id)` → round 1/round 2 on `raw_text_truncated` →
+`strata_save_paper(..., from_queue_id=queue_id)` → `strata_save_paper_analysis`
+×2 → `strata_mark_ingested`; hard failure → `strata_mark_failed(..., permanent=True)`).
+`fetch_and_stage` parks the big `raw_text` server-side (on the queue row) so the
+subagent never round-trips it. It still documents a "directed" fallback (subagent
+returns the JSON as text, orchestrator persists) for when you want to drive it
+from the main session. (APEX decision #15.)
 
 ## Status
 
-`/apex` phases 0-8 done. **Core** (`core/*`): dedupe keys, entity validation +
-factories, phase catalogue — 100% test coverage. **Adapters**: `sqlite_storage`
-(full `IStorage` — schema, migrations, WAL, FTS5 search, atomic ingest queue,
-versioned artefacts), `arxiv` (id parsing, Atom API metadata, PDF full text,
-retry/backoff), `pdf_extractor` (defensive PDF → text). `semantic_scholar` /
-`web_scraper` / `github_repo` are still v1 stubs. **Server**: FastMCP stdio
-server exposing 33 `strata_*` tools, storage wired from `$STRATA_DB`.
-**install.sh**: venv + register the MCP server in `~/.claude.json` + symlink
-skills/command (idempotent). **`commands/strata.md`**: the real phased flow.
-**Skills**: `analyze-paper`, `gap-analysis`, `draft-paper` are real; the other
-four (`relevance-analysis`, `literature-review`, `scout`, `citation-qa`) are v1
-placeholders. ~119 tests pass; CI (ruff + pytest, py3.10/3.12) green. Templates
+`/apex` phases 0-11 done; **v0.1.0 released** (tag + GitHub release), live E2E
+passed (Haiku subagents drained the ingest queue via MCP). **Core** (`core/*`):
+dedupe keys, entity validation + factories, phase catalogue — 100% test coverage.
+**Adapters**: `sqlite_storage` (full `IStorage` — schema, idempotent migrations,
+WAL, FTS5 search, atomic ingest queue with `raw_text` staging, versioned
+artefacts), `arxiv` (id parsing, Atom API metadata, PDF full text), `_http`
+(shared User-Agent / timeout / retry-backoff GET), `pdf_extractor` (defensive
+PDF → text). `semantic_scholar` / `web_scraper` / `github_repo` are still v1
+stubs. **Server**: FastMCP stdio server exposing the `strata_*` tools (34 incl.
+`strata_fetch_and_stage`), storage wired from `$STRATA_DB`. **install.sh**: venv
++ register the MCP server in `~/.claude.json` + symlink skills/command
+(idempotent; already run against the real `~/.claude.json`). **`commands/strata.md`**:
+the real phased flow. **Skills**: `analyze-paper`, `gap-analysis`, `draft-paper`
+are real; the other four (`relevance-analysis`, `literature-review`, `scout`,
+`citation-qa`) are v1 placeholders. 137 tests pass, ~93% coverage (core 100%);
+CI (ruff + pytest, py3.10/3.12) green. Templates
 (`templates/{lncs,ieee,acm,inted,generic}/`) and `scripts/migrate_supabase.py`
-are still empty/stub (v1). Pending: a live multi-agent E2E in a fresh registered
-session; phase 9 (raise coverage on adapters/server); phases 10-11 (security
-review, release/tag); v1 (the stub adapters + skills, templates, the Supabase
-migration, hub integration).
+are still empty/stub (v1). Pending v1: the stub adapters + skills, templates, the
+Supabase migration, strata-hub integration.

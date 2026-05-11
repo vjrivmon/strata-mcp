@@ -18,23 +18,34 @@ registrado, y termina.
 
 1. `strata_dequeue_paper(worker_id="<algo único, p. ej. tu id de subagente>")`.
    - Si devuelve `null` → la cola está vacía: termina con "cola vacía, nada que hacer".
-   - Si devuelve un ítem, guarda su `id` (= `queue_id`), su `url` y su `project_id`.
-2. `strata_fetch_paper_text(ref=<url>, hint=<el hint del ítem si lo trae>)`.
-   - Devuelve `{title, doi, arxiv_id, authors, year, venue, url, abstract, raw_text, raw_text_truncated, source}`.
-   - Si lanza error (404, PDF escaneado/cifrado, no es un paper...): llama
-     `strata_mark_failed(queue_id=<id>, error="<mensaje del error>")` y termina.
-     El ítem se reintenta solo hasta el tope; no insistas tú.
-3. **Round 1 (triage)** — sobre `raw_text_truncated` (o `abstract` + el final de
-   `raw_text` si no hay texto truncado). Produce el JSON Round1 (ver abajo).
-4. `strata_save_paper(title=..., project_id=<project_id del ítem>, doi=..., arxiv_id=..., authors=..., year=..., venue=..., url=..., abstract=..., raw_text=<raw_text completo>, source=...)`.
-   - Devuelve el paper guardado con su `id` canónico. **Usa ese `id`** en los pasos siguientes — puede no ser nuevo (upsert por dedupe).
-5. `strata_save_paper_analysis(paper_id=<id devuelto>, round1=<JSON Round1>, model_used="haiku")`.
-6. **Round 2 (análisis profundo)** — sobre `raw_text` completo (o las primeras
-   ~8000 palabras si es enorme). Produce el JSON Round2.
+   - Si devuelve un ítem, guarda su `id` (= `queue_id`) y su `project_id`.
+2. `strata_fetch_and_stage(queue_id=<id>)`.
+   - Hace el fetch y **deja el `raw_text` completo guardado en el servidor** (en
+     la fila de la cola). Te devuelve solo `{title, doi, arxiv_id, authors, year,
+     venue, url, abstract, raw_text_truncated, source, queue_id, raw_text_staged}`
+     — NO te devuelve el `raw_text` enorme, así no lo arrastras por tu contexto.
+   - Si lanza error (404, PDF escaneado/cifrado, no es un paper...):
+     - Fallo duro que reintentar no arreglará (el id de arXiv no existe, la URL
+       no es un paper, el PDF está escaneado/cifrado):
+       `strata_mark_failed(queue_id=<id>, error="<mensaje>", permanent=true)` y termina.
+     - Fallo aparentemente transitorio (timeout, 5xx puntual):
+       `strata_mark_failed(queue_id=<id>, error="<mensaje>")` (sin `permanent`) y
+       termina — el ítem se reintenta solo hasta el tope; no insistas tú.
+3. **Round 1 (triage)** — sobre `raw_text_truncated` (o `abstract` si no hay
+   texto). Produce el JSON Round1 (ver abajo).
+4. **Round 2 (análisis profundo)** — sobre el mismo `raw_text_truncated` (cubre
+   abstract + intro + métodos + resultados + conclusión, que es lo que
+   necesitas). Produce el JSON Round2.
+5. `strata_save_paper(title=..., project_id=<project_id del ítem>, doi=..., arxiv_id=..., authors=..., year=..., venue=..., url=..., abstract=..., source=..., from_queue_id=<queue_id>)`.
+   - **No le pases `raw_text`**: con `from_queue_id` el servidor recupera el
+     `raw_text` completo que dejaste en staging en el paso 2.
+   - Devuelve el paper guardado con su `id` canónico. **Usa ese `id`** en los
+     pasos siguientes — puede no ser nuevo (upsert por dedupe).
+6. `strata_save_paper_analysis(paper_id=<id devuelto>, round1=<JSON Round1>, model_used="haiku")`.
 7. `strata_save_paper_analysis(paper_id=<id>, round2=<JSON Round2>, model_used="haiku")`.
    - Round1 y Round2 se guardan por separado a propósito: si fallas en Round2,
      Round1 ya está a salvo.
-8. `strata_mark_ingested(queue_id=<id>)`.
+8. `strata_mark_ingested(queue_id=<id>)`. (Esto también limpia el `raw_text` en staging.)
 9. Termina con un resumen de una línea: título, `relevance_score`, si vale la pena leerlo.
 
 ## Las salidas JSON
@@ -88,7 +99,7 @@ por la industria → 9.
 
 Si te invocan SIN cola (te pasan directamente el `raw_text` / `raw_text_truncated`
 en el prompt y te piden que devuelvas los JSON como texto en vez de persistir),
-haz exactamente los pasos 3 y 6 y devuelve:
+haz exactamente los pasos 3 y 4 (Round1 y Round2) y devuelve:
 ```json
 { "round1": { ... }, "round2": { ... } }
 ```

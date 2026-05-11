@@ -23,7 +23,12 @@ Hardening (EDGE-CASES + decisions #10/#11):
   ``BEGIN IMMEDIATE``.
 * ``dequeue_paper`` claims one item atomically (``BEGIN IMMEDIATE``) after
   reclaiming stale ``processing`` rows; ``attempts`` is bumped on claim and
-  capped, so a poison item ends up permanently ``failed`` instead of looping.
+  capped, so a poison item ends up permanently ``failed`` instead of looping —
+  and ``mark_failed(..., permanent=True)`` fails it at once for a hard 404 /
+  not-a-paper that no retry can fix.
+* ``stage_raw_text`` parks a fetched paper's full text on its queue row so a
+  subagent fetches it once (server-side) and persists it via ``save_paper``
+  without round-tripping the large text; ``mark_ingested`` clears the staged copy.
 * every paper/gap/draft/candidate read is scoped by ``project_id``.
 """
 
@@ -1019,22 +1024,27 @@ class SqliteStorage(IStorage):
         ).isoformat()
 
     def mark_ingested(self, queue_id: int) -> None:
+        # clears ``raw`` too — once the paper is saved, the staged full text (see
+        # ``stage_raw_text``) has served its purpose; no point keeping a second copy.
         with self._immediate() as conn:
             updated = conn.execute(
-                "UPDATE ingest_queue SET status = 'done', processed_at = ?, error = NULL WHERE id = ?",
+                "UPDATE ingest_queue SET status = 'done', processed_at = ?, error = NULL, "
+                "raw = NULL WHERE id = ?",
                 (now_iso(), int(queue_id)),
             ).rowcount
             if not updated:
                 raise ValueError(f"no such ingest_queue item: {queue_id}")
 
-    def mark_failed(self, queue_id: int, error: str, raw: str | None = None) -> None:
+    def mark_failed(
+        self, queue_id: int, error: str, raw: str | None = None, permanent: bool = False
+    ) -> None:
         with self._immediate() as conn:
             row = conn.execute(
                 "SELECT attempts FROM ingest_queue WHERE id = ?", (int(queue_id),)
             ).fetchone()
             if row is None:
                 raise ValueError(f"no such ingest_queue item: {queue_id}")
-            terminal = int(row["attempts"]) >= self.max_ingest_attempts
+            terminal = permanent or int(row["attempts"]) >= self.max_ingest_attempts
             conn.execute(
                 "UPDATE ingest_queue SET status = ?, error = ?, raw = COALESCE(?, raw), "
                 "worker_id = NULL, processed_at = ? WHERE id = ?",
@@ -1046,6 +1056,37 @@ class SqliteStorage(IStorage):
                     int(queue_id),
                 ),
             )
+
+    def get_queue_item(self, queue_id: int) -> IngestQueueItem | None:
+        row = (
+            self._conn()
+            .execute("SELECT * FROM ingest_queue WHERE id = ?", (int(queue_id),))
+            .fetchone()
+        )
+        return _row_to_queue_item(row) if row else None
+
+    def stage_raw_text(self, queue_id: int, text: str | None) -> None:
+        """Park the full extracted ``raw_text`` of a queued paper in the queue
+        row, so a subagent can fetch it once (server-side) and later persist it
+        via ``save_paper`` without round-tripping the megabyte-sized text through
+        its own context. ``mark_ingested`` clears it again."""
+        with self._immediate() as conn:
+            updated = conn.execute(
+                "UPDATE ingest_queue SET raw = ? WHERE id = ?",
+                (sanitize_text(text), int(queue_id)),
+            ).rowcount
+            if not updated:
+                raise ValueError(f"no such ingest_queue item: {queue_id}")
+
+    def get_staged_raw_text(self, queue_id: int) -> str | None:
+        """The full ``raw_text`` staged for a queued paper by ``stage_raw_text``,
+        or ``None`` if nothing was staged (or the item is gone)."""
+        row = (
+            self._conn()
+            .execute("SELECT raw FROM ingest_queue WHERE id = ?", (int(queue_id),))
+            .fetchone()
+        )
+        return row["raw"] if row and row["raw"] else None
 
     def queue_status(self, project_id: str) -> dict[str, int]:
         rows = (

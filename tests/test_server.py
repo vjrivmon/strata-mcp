@@ -44,6 +44,7 @@ def test_all_mvp_tools_are_registered():
         "strata_mark_ingested",
         "strata_mark_failed",
         "strata_fetch_paper_text",
+        "strata_fetch_and_stage",
         "strata_save_paper",
         "strata_get_paper",
         "strata_list_papers",
@@ -247,3 +248,61 @@ def test_fetch_paper_text_dispatch():
     with pytest.raises(ValueError):
         # a plain web page: no source in this MVP can handle it (arXiv/PDF only)
         srv.strata_fetch_paper_text("https://example.com/some-web-page")
+
+
+def test_fetch_and_stage_round_trips_raw_text_via_staging(
+    store, project, tmp_path, sample_pdf_bytes
+):
+    pid = project["id"]
+    pdf_path = tmp_path / "great_paper.pdf"
+    pdf_path.write_bytes(sample_pdf_bytes)
+    srv.strata_queue_papers(pid, [str(pdf_path)])
+    item = srv.strata_dequeue_paper("w1")
+
+    staged = srv.strata_fetch_and_stage(item["id"])
+    # the megabyte-sized full text stays server-side; the subagent only sees the truncated one
+    assert "raw_text" not in staged
+    assert staged["raw_text_truncated"] and staged["raw_text_staged"] is True
+    assert staged["queue_id"] == item["id"] and staged["source"] == "pdf" and staged["title"]
+    assert store.get_staged_raw_text(item["id"])  # parked on the queue row
+
+    saved = srv.strata_save_paper(
+        staged["title"],
+        project_id=pid,
+        url=staged.get("url"),
+        source="pdf",
+        from_queue_id=item["id"],
+    )
+    assert saved["raw_text"] and "abstract" in saved["raw_text"].lower()
+
+    srv.strata_mark_ingested(item["id"])
+    assert srv.strata_queue_status(pid)["done"] == 1
+    assert store.get_staged_raw_text(item["id"]) is None  # cleared once the paper is saved
+
+    # an explicit raw_text always wins over the staged one
+    s2 = srv.strata_save_paper(
+        "Another",
+        project_id=pid,
+        url="https://example.org/p",
+        raw_text="explicit text here",
+        from_queue_id=item["id"],
+    )
+    assert s2["raw_text"] == "explicit text here"
+
+    with pytest.raises(ValueError):
+        srv.strata_fetch_and_stage(999_999)
+
+
+def test_mark_failed_permanent_does_not_retry(store, project):
+    pid = project["id"]
+    srv.strata_queue_papers(pid, ["https://arxiv.org/abs/9999.99999"], hint="arxiv")
+    item = srv.strata_dequeue_paper("w1")
+    srv.strata_mark_failed(item["id"], "arXiv paper not found: 9999.99999", permanent=True)
+    qs = srv.strata_queue_status(pid)
+    assert qs["failed"] == 1 and qs["pending"] == 0  # not retried
+    assert store.get_queue_item(item["id"]).status.value == "failed"
+    # a transient failure on a fresh item, by contrast, goes back to pending
+    srv.strata_queue_papers(pid, ["https://arxiv.org/abs/2401.0002"], hint="arxiv")
+    other = srv.strata_dequeue_paper("w1")
+    srv.strata_mark_failed(other["id"], "HTTP 503")
+    assert srv.strata_queue_status(pid)["pending"] == 1

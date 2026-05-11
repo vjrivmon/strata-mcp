@@ -146,18 +146,11 @@ class PdfSource(IPaperSource):
 
 
 def _download(url: str, *, timeout: float | None = None) -> bytes:
-    import httpx
-
-    from strata_mcp.adapters.arxiv import _http_timeout, user_agent
+    from strata_mcp.adapters import _http
 
     try:
-        with httpx.Client(
-            follow_redirects=True, timeout=_http_timeout() if timeout is None else timeout
-        ) as client:
-            resp = client.get(url, headers={"User-Agent": user_agent()})
-            resp.raise_for_status()
-            return resp.content
-    except httpx.HTTPError as exc:
+        return _http.get_bytes(url, timeout=timeout)
+    except _http.HttpError as exc:
         raise PdfError(f"could not download {url}: {exc}") from exc
 
 

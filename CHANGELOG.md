@@ -3,6 +3,30 @@
 All notable changes to strata-mcp are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`strata_fetch_and_stage(queue_id)`** — fetches a queued paper and parks its
+  full `raw_text` server-side (on the ingest-queue row), returning only the
+  metadata + `raw_text_truncated`. A Haiku subagent draining the queue no longer
+  round-trips the megabyte-sized text through its own context.
+- **`strata_save_paper(..., from_queue_id=...)`** — recovers the staged
+  `raw_text` for that queue item instead of taking it as an argument;
+  `strata_mark_ingested` then clears the staged copy. An explicit `raw_text`
+  still wins if you pass one.
+- **`strata_mark_failed(..., permanent=True)`** — fails an ingest item at once
+  for a hard failure that retrying can't fix (the arXiv id doesn't exist, the
+  URL isn't a paper, the PDF is scanned/encrypted) instead of cycling it back to
+  `pending` until the attempts cap.
+
+### Changed
+- HTTP plumbing (User-Agent with `STRATA_CONTACT_EMAIL`, `STRATA_HTTP_TIMEOUT`,
+  retry-with-backoff GET) moved into a shared `strata_mcp.adapters._http`
+  module; the arXiv and PDF adapters now both build on it (the PDF extractor no
+  longer imports private helpers from the arXiv adapter).
+- The `analyze-paper` skill and the `/strata` command document the staged-text
+  flow and the `permanent` failure flag.
+
 ## [0.1.0] — 2026-05-10
 
 First working release — the MVP engine.

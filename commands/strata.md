@@ -62,9 +62,12 @@ Guarda el `id` devuelto — es el `project_id` de aquí en adelante.
    en paralelo** (tantos como ítems pendientes, hasta un máximo razonable —
    `STRATA_INGEST_BATCH`, por defecto ~5). A cada subagente dale **la skill
    `analyze-paper`** como instrucción y un `worker_id` único. Cada subagente:
-   `strata_dequeue_paper` → `strata_fetch_paper_text` → Round1 → `strata_save_paper`
-   → `strata_save_paper_analysis(round1=...)` → Round2 → `strata_save_paper_analysis(round2=...)`
-   → `strata_mark_ingested`. Si un paper falla → `strata_mark_failed` (se reintenta solo).
+   `strata_dequeue_paper` → `strata_fetch_and_stage(queue_id)` (deja el `raw_text`
+   grande en el servidor, no lo arrastra) → Round1 + Round2 sobre `raw_text_truncated`
+   → `strata_save_paper(..., from_queue_id=queue_id)` → `strata_save_paper_analysis(round1=...)`
+   → `strata_save_paper_analysis(round2=...)` → `strata_mark_ingested`. Si un paper
+   falla → `strata_mark_failed(queue_id, error, permanent=true)` para fallos duros
+   (404, no es un paper, PDF escaneado), o sin `permanent` si parece transitorio.
 3. "Poco a poco": si quedan ítems `pending` tras el lote, dile al usuario cuántos
    y que con volver a invocar `/strata` se drena el siguiente lote. La cola
    persiste entre sesiones.

@@ -5,25 +5,21 @@
 * arXiv ids are validated (new ``YYMM.NNNNN`` and old ``archive/NNNNNNN`` forms,
   with or without a ``vN`` suffix or an ``arxiv.org/abs|pdf/`` wrapper).
 * Network calls retry a few times with exponential backoff on timeouts / 5xx /
-  429; a hard failure raises a descriptive error. If only the *PDF* fails the
-  paper is still returned (metadata + abstract, ``raw_text=None``) — the
-  abstract alone is useful for triage.
+  429 (see :mod:`strata_mcp.adapters._http`); a hard failure raises a
+  descriptive error. If only the *PDF* fails the paper is still returned
+  (metadata + abstract, ``raw_text=None``) — the abstract alone is useful for
+  triage.
 """
 
 from __future__ import annotations
 
-import os
-import time
-
+from strata_mcp.adapters import _http
 from strata_mcp.core.dedupe import normalize_arxiv_id
 from strata_mcp.core.entities import coerce_year
 from strata_mcp.core.ports import FetchedPaper, IPaperSource, SearchHit, SearchResult
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}"
-_BASE_USER_AGENT = "strata-mcp/0.1 (+https://github.com/vjrivmon/strata-mcp)"
-_RETRIES = 3
-_BACKOFF_BASE = 1.5
 
 
 class ArxivError(RuntimeError):
@@ -36,38 +32,11 @@ def parse_arxiv_id(ref: str) -> str | None:
     return normalize_arxiv_id(ref)
 
 
-def user_agent() -> str:
-    """The HTTP User-Agent, with ``STRATA_CONTACT_EMAIL`` appended if set
-    (arXiv / Semantic Scholar ask for a contact; it helps avoid rate limiting)."""
-    email = (os.environ.get("STRATA_CONTACT_EMAIL") or "").strip()
-    return f"{_BASE_USER_AGENT} (mailto:{email})" if email else _BASE_USER_AGENT
-
-
-def _http_timeout() -> float:
-    try:
-        return max(1.0, float(os.environ.get("STRATA_HTTP_TIMEOUT", 30.0)))
-    except (TypeError, ValueError):
-        return 30.0
-
-
 def _http_get(url: str, params: dict | None = None, *, timeout: float | None = None) -> bytes:
-    import httpx
-
-    timeout = _http_timeout() if timeout is None else timeout
-    last_exc: Exception | None = None
-    for attempt in range(_RETRIES):
-        try:
-            with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-                resp = client.get(url, params=params, headers={"User-Agent": user_agent()})
-            if resp.status_code in (429, 500, 502, 503, 504):
-                raise httpx.HTTPStatusError("retryable status", request=resp.request, response=resp)
-            resp.raise_for_status()
-            return resp.content
-        except httpx.HTTPError as exc:
-            last_exc = exc
-            if attempt < _RETRIES - 1:
-                time.sleep(_BACKOFF_BASE**attempt)
-    raise ArxivError(f"GET {url} failed after {_RETRIES} attempts: {last_exc}")
+    try:
+        return _http.get_bytes(url, params, timeout=timeout)
+    except _http.HttpError as exc:
+        raise ArxivError(str(exc)) from exc
 
 
 def _parse_feed(raw: bytes) -> list[dict]:

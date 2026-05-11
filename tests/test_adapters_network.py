@@ -1,7 +1,8 @@
 """Network-facing paths of the adapters, with HTTP mocked (``respx``): the
-arXiv Atom API + PDF download in :mod:`strata_mcp.adapters.arxiv`, the PDF
-download in :mod:`strata_mcp.adapters.pdf_extractor`, and the
-``strata_fetch_paper_text`` MCP tool going through them. No real network."""
+shared GET helper in :mod:`strata_mcp.adapters._http`, the arXiv Atom API + PDF
+download in :mod:`strata_mcp.adapters.arxiv`, the PDF download in
+:mod:`strata_mcp.adapters.pdf_extractor`, and the ``strata_fetch_paper_text``
+MCP tool going through them. No real network."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import pytest
 import respx
 
 from strata_mcp import server as srv
+from strata_mcp.adapters import _http as H
 from strata_mcp.adapters import arxiv as A
 from strata_mcp.adapters import pdf_extractor as P
 
@@ -37,8 +39,40 @@ _FEED_EMPTY = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
-    # the retry backoff in arxiv._http_get must not actually sleep in tests
-    monkeypatch.setattr(A.time, "sleep", lambda *_a, **_k: None)
+    # the retry backoff in _http.get_bytes must not actually sleep in tests
+    monkeypatch.setattr(H.time, "sleep", lambda *_a, **_k: None)
+
+
+# --------------------------------------------------------------------------- #
+# _http: User-Agent / timeout / retrying GET
+# --------------------------------------------------------------------------- #
+def test_http_user_agent_and_timeout(monkeypatch):
+    monkeypatch.delenv("STRATA_CONTACT_EMAIL", raising=False)
+    monkeypatch.delenv("STRATA_HTTP_TIMEOUT", raising=False)
+    assert H.user_agent() == H.USER_AGENT_BASE
+    assert H.http_timeout() == H.DEFAULT_HTTP_TIMEOUT
+    monkeypatch.setenv("STRATA_CONTACT_EMAIL", "me@example.com")
+    monkeypatch.setenv("STRATA_HTTP_TIMEOUT", "0.5")  # floored at 1
+    assert "mailto:me@example.com" in H.user_agent()
+    assert H.http_timeout() == 1.0
+    monkeypatch.setenv("STRATA_HTTP_TIMEOUT", "not-a-number")
+    assert H.http_timeout() == H.DEFAULT_HTTP_TIMEOUT
+
+
+@respx.mock
+def test_http_get_bytes_retries_then_raises():
+    route = respx.get("https://host/x").mock(return_value=httpx.Response(503))
+    with pytest.raises(H.HttpError, match="after 3 attempts"):
+        H.get_bytes("https://host/x")
+    assert route.call_count == 3
+
+
+@respx.mock
+def test_http_get_bytes_recovers_on_retry():
+    respx.get("https://host/y").mock(
+        side_effect=[httpx.Response(500), httpx.Response(200, content=b"ok")]
+    )
+    assert H.get_bytes("https://host/y") == b"ok"
 
 
 # --------------------------------------------------------------------------- #

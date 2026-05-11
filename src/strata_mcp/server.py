@@ -287,11 +287,16 @@ def strata_mark_ingested(queue_id: int) -> dict:
 
 
 @mcp.tool()
-def strata_mark_failed(queue_id: int, error: str, raw: str | None = None) -> dict:
-    """Record that an ingest item failed (404, unreadable PDF, ...). It is
-    retried until the attempt cap, then permanently ``failed``. ``raw`` may hold
-    a snippet of what was fetched, for debugging."""
-    get_storage().mark_failed(queue_id, error, raw=raw)
+def strata_mark_failed(
+    queue_id: int, error: str, raw: str | None = None, permanent: bool = False
+) -> dict:
+    """Record that an ingest item failed (404, unreadable PDF, ...). By default
+    it is retried until the attempt cap, then permanently ``failed``. Pass
+    ``permanent=True`` for a hard failure that retrying can't fix — the arXiv id
+    doesn't exist, the URL isn't a paper, the PDF is scanned/encrypted — so it
+    goes straight to ``failed`` and is never retried. ``raw`` may hold a snippet
+    of what was fetched, for debugging."""
+    get_storage().mark_failed(queue_id, error, raw=raw, permanent=permanent)
     return {"ok": True}
 
 
@@ -301,14 +306,9 @@ def strata_mark_failed(queue_id: int, error: str, raw: str | None = None) -> dic
 _PAPER_SOURCES = (ArxivSource(), PdfSource())
 
 
-@mcp.tool()
-def strata_fetch_paper_text(ref: str, hint: str | None = None) -> dict:
-    """Fetch a paper's metadata + full text from a reference (arXiv id/URL, a
-    direct PDF URL, or a local PDF path). Returns title/doi/arxiv_id/authors/
-    year/venue/url/abstract/raw_text plus ``raw_text_truncated`` (a shorter
-    version sized for a Haiku context window — use it for round-1 analysis).
-    Web-page and Semantic-Scholar sources are not in this MVP. Raises a
-    descriptive error on a hard failure (404, scanned/encrypted PDF, ...)."""
+def _pick_source(ref: str, hint: str | None):
+    """The paper source that handles ``ref`` (honouring an explicit ``hint``),
+    or raise ``ValueError`` if none does."""
     ref = (ref or "").strip()
     if not ref:
         raise ValueError("ref is required")
@@ -322,7 +322,46 @@ def strata_fetch_paper_text(ref: str, hint: str | None = None) -> dict:
             f"no paper source can handle {ref!r} (this MVP supports arXiv ids/URLs and PDF "
             "files/URLs; web pages, DOIs and Semantic Scholar are v1)"
         )
-    return _d(chosen.fetch(ref))
+    return chosen
+
+
+@mcp.tool()
+def strata_fetch_paper_text(ref: str, hint: str | None = None) -> dict:
+    """Fetch a paper's metadata + full text from a reference (arXiv id/URL, a
+    direct PDF URL, or a local PDF path). Returns title/doi/arxiv_id/authors/
+    year/venue/url/abstract/raw_text plus ``raw_text_truncated`` (a shorter
+    version sized for a Haiku context window — use it for round-1 analysis).
+    Web-page and Semantic-Scholar sources are not in this MVP. Raises a
+    descriptive error on a hard failure (404, scanned/encrypted PDF, ...).
+
+    For draining the ingest queue, prefer ``strata_fetch_and_stage`` — it keeps
+    the big ``raw_text`` server-side instead of returning it."""
+    return _d(_pick_source(ref, hint).fetch((ref or "").strip()))
+
+
+@mcp.tool()
+def strata_fetch_and_stage(queue_id: int) -> dict:
+    """Fetch a *queued* paper's metadata + full text, and **stage the full
+    ``raw_text`` server-side** (parked on the ingest-queue row) — returning only
+    the metadata + ``abstract`` + ``raw_text_truncated``, never the megabyte
+    full text. Use this from a Haiku subagent draining the queue: it does
+    round-1/round-2 on ``raw_text_truncated``, then persists with
+    ``strata_save_paper(..., from_queue_id=<this id>)`` (which recovers the
+    staged ``raw_text``) and ``strata_mark_ingested(<this id>)``. On a hard
+    fetch failure (404, scanned/encrypted PDF, not a paper) it raises — call
+    ``strata_mark_failed(queue_id, error, permanent=True)`` then. ``queue_id``
+    is the ``id`` returned by ``strata_dequeue_paper``."""
+    storage = get_storage()
+    item = storage.get_queue_item(int(queue_id))
+    if item is None:
+        raise ValueError(f"no such ingest_queue item: {queue_id}")
+    fetched = _pick_source(item.url, item.hint).fetch(item.url)
+    storage.stage_raw_text(int(queue_id), fetched.raw_text)
+    out = _d(fetched)
+    out.pop("raw_text", None)  # the full text stays server-side; staged on the queue row
+    out["queue_id"] = int(queue_id)
+    out["raw_text_staged"] = bool(fetched.raw_text)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -341,11 +380,20 @@ def strata_save_paper(
     abstract: str | None = None,
     raw_text: str | None = None,
     source: str = "unknown",
+    from_queue_id: int | None = None,
 ) -> dict:
     """Save (upsert by DOI > arXiv id > URL > title) a paper into the library;
     if ``project_id`` is given, also link it to that project. Re-saving the same
     paper merges new metadata into the existing row (it never duplicates).
-    Returns the stored paper — **use the returned ``id``** for analyses/context."""
+    Returns the stored paper — **use the returned ``id``** for analyses/context.
+
+    ``from_queue_id``: when set (and you don't pass ``raw_text`` yourself),
+    recovers the full ``raw_text`` staged by ``strata_fetch_and_stage`` for that
+    queue item — so a subagent never has to round-trip the megabyte-sized text.
+    Then ``strata_mark_ingested(from_queue_id)``."""
+    storage = get_storage()
+    if from_queue_id is not None and not (raw_text and raw_text.strip()):
+        raw_text = storage.get_staged_raw_text(int(from_queue_id))
     paper = Paper.create(
         title,
         doi=doi,
@@ -358,7 +406,7 @@ def strata_save_paper(
         raw_text=raw_text,
         source=source if source in {s.value for s in PaperSource} else "unknown",
     )
-    return _d(get_storage().save_paper(paper, project_id=project_id))
+    return _d(storage.save_paper(paper, project_id=project_id))
 
 
 @mcp.tool()

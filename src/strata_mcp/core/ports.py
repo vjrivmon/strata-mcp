@@ -167,12 +167,33 @@ class IStorage(ABC):
         ...
 
     @abstractmethod
+    def get_queue_item(self, queue_id: int) -> IngestQueueItem | None:
+        """One queue item by id, or ``None``."""
+        ...
+
+    @abstractmethod
+    def stage_raw_text(self, queue_id: int, text: str | None) -> None:
+        """Park a queued paper's full ``raw_text`` in the queue row so it can be
+        fetched once server-side and later persisted via ``save_paper`` without
+        the caller round-tripping the large text. ``mark_ingested`` clears it."""
+        ...
+
+    @abstractmethod
+    def get_staged_raw_text(self, queue_id: int) -> str | None:
+        """The ``raw_text`` staged by :meth:`stage_raw_text`, or ``None``."""
+        ...
+
+    @abstractmethod
     def mark_ingested(self, queue_id: int) -> None: ...
 
     @abstractmethod
-    def mark_failed(self, queue_id: int, error: str, raw: str | None = None) -> None:
-        """Record the failure; if ``attempts`` now exceeds the cap, the item is
-        permanently failed (won't be reclaimed by the stale-reset)."""
+    def mark_failed(
+        self, queue_id: int, error: str, raw: str | None = None, permanent: bool = False
+    ) -> None:
+        """Record the failure. If ``permanent`` (a hard 404 / not-a-paper) or
+        ``attempts`` now exceeds the cap, the item is permanently ``failed``
+        (it won't be reclaimed by the stale-reset or retried); otherwise it goes
+        back to ``pending`` for another attempt."""
         ...
 
     @abstractmethod
