@@ -1,0 +1,60 @@
+% IEEE conference paper — skeleton.
+% Needs IEEEtran.cls + IEEEtran.bst (ctan.org/pkg/ieeetran, or Overleaf's "IEEE
+% Conference" template). For a journal use [journal] instead of [conference].
+% Compile: pdflatex -> bibtex -> pdflatex x2.
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\begin{document}
+
+\title{TODO: Paper title}
+
+\author{
+\IEEEauthorblockN{TODO Author}
+\IEEEauthorblockA{\textit{TODO Department} \\
+\textit{TODO University}\\
+City, Country \\
+todo@example.org}
+}
+
+\maketitle
+
+\begin{abstract}
+TODO: 150--250 word abstract. % filled from the project's stored abstract
+\end{abstract}
+
+\begin{IEEEkeywords}
+TODO, keyword, list
+\end{IEEEkeywords}
+
+\section{Introduction}
+TODO: introduction. Cite with \cite{example2024} (numeric, square brackets).
+
+\section{Related Work}
+TODO: related work (from the literature-review section).
+
+\section{Methodology}
+TODO.
+
+\section{Results}
+TODO.
+
+\section{Discussion}
+TODO.
+
+\section{Conclusion}
+TODO.
+
+% --- Bibliography ---------------------------------------------------------
+% IEEE uses numeric citations and the IEEEtran bib style.
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,56 @@
+% INTED / IATED conference paper (EDULEARN, ICERI, INTED) — LaTeX approximation.
+% IATED ships an MS Word template, not a LaTeX class; this matches its layout
+% rules (A4, ~2.5 cm margins, Times-like serif, numbered sections, numbered
+% references in order of appearance). No special class/.bst needed beyond base
+% LaTeX. Compile: pdflatex -> bibtex -> pdflatex x2.
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext,newtxmath}            % Times-like serif (IATED house look)
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{authblk}
+
+\titleformat{\section}{\large\bfseries\MakeUppercase}{\thesection}{1em}{}
+\renewcommand\Affilfont{\itshape\small}
+
+\title{\textbf{TODO: PAPER TITLE}}
+\author[1]{TODO Author}
+\affil[1]{TODO University (COUNTRY)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent TODO: 150--300 word abstract. % filled from the project's stored abstract
+
+\smallskip\noindent\textbf{Keywords:} TODO, keyword, list, innovation, technology, education.
+\end{abstract}
+
+\section{Introduction}
+TODO: introduction. Cite with \cite{example2024} — numeric, square brackets,
+numbered in order of appearance.
+
+\section{Methodology}
+TODO.
+
+\section{Results}
+TODO.
+
+\section{Conclusions}
+TODO.
+
+\section*{Acknowledgements}
+TODO (optional).
+
+% --- References -----------------------------------------------------------
+% IATED: numbered list, in order of first citation. `ieeetr` gives exactly that
+% with plain BibTeX (no natbib). Keep entries in references.bib.
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\end{document}

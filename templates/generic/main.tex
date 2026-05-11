@@ -1,0 +1,52 @@
+% Generic paper — plain `article` with author-year citations via natbib.
+% No venue-specific class needed; everything here ships with a standard TeX
+% install. Compile: pdflatex -> bibtex -> pdflatex x2.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage[round]{natbib}        % author-year: \citep / \citet
+\usepackage[hidelinks]{hyperref}
+
+\title{TODO: Paper title}
+\author{TODO Author\\ \small TODO Affiliation \\ \small\texttt{todo@example.org}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TODO: 150--250 word abstract. % filled from the project's stored abstract
+
+\smallskip\noindent\textbf{Keywords:} TODO, keyword, list.
+\end{abstract}
+
+\section{Introduction}
+TODO: introduction. Parenthetical cite \citep{example2024}; textual cite
+\citet{example2024} renders the authors inline.
+
+\section{Related Work}
+TODO: related work (from the literature-review section).
+
+\section{Methodology}
+TODO.
+
+\section{Results}
+TODO.
+
+\section{Discussion}
+TODO.
+
+\section{Conclusion}
+TODO.
+
+% --- References -----------------------------------------------------------
+% Author-year list, alphabetical by first author. `plainnat` works everywhere;
+% swap for `apalike`, `abbrvnat`, etc. if you prefer.
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

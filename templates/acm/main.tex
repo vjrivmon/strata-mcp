@@ -1,0 +1,55 @@
+% ACM article (acmart) — skeleton, sigconf proceedings format.
+% Needs acmart.cls + ACM-Reference-Format.bst (ctan.org/pkg/acmart, or Overleaf's
+% "ACM Conference Proceedings" template). Compile: pdflatex -> bibtex -> pdflatex x2.
+\documentclass[sigconf,nonacm]{acmart}   % drop "nonacm" for a real submission
+
+\usepackage{booktabs}
+
+\begin{document}
+
+\title{TODO: Paper title}
+
+\author{TODO Author}
+\affiliation{%
+  \institution{TODO University}
+  \city{City}
+  \country{Country}}
+\email{todo@example.org}
+
+\renewcommand{\shortauthors}{TODO Author}
+
+\begin{abstract}
+TODO: 150--250 word abstract. % filled from the project's stored abstract
+\end{abstract}
+
+% CCS concepts + keywords are required for ACM submissions:
+% \begin{CCSXML} ... \end{CCSXML}  (generate at dl.acm.org/ccs)
+% \ccsdesc[500]{TODO}
+\keywords{TODO, keyword, list}
+
+\maketitle
+
+\section{Introduction}
+TODO: introduction. Cite with \cite{example2024} (numeric, square brackets).
+
+\section{Related Work}
+TODO: related work (from the literature-review section).
+
+\section{Methodology}
+TODO.
+
+\section{Results}
+TODO.
+
+\section{Discussion}
+TODO.
+
+\section{Conclusion}
+TODO.
+
+% --- Bibliography ---------------------------------------------------------
+% acmart defaults to numeric citations with the ACM-Reference-Format style.
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

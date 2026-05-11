@@ -276,7 +276,8 @@ class IRepoSource(ABC):
     Claude Code summarises it into the gap/draft prompt."""
 
     @abstractmethod
-    def scan(self, repo_url_or_path: str) -> RepoSnapshot:
-        """Returns a ``RepoSnapshot``. On an inaccessible/private repo without a
-        token, degrades to an empty snapshot rather than raising."""
+    def scan(self, repo_url_or_path: str, project_id: str) -> RepoSnapshot:
+        """Returns a ``RepoSnapshot`` for ``project_id``. On an inaccessible /
+        private repo without a token, degrades to a snapshot whose ``layers``
+        carries an ``error`` note rather than raising."""
         ...

@@ -60,10 +60,13 @@ def test_all_mvp_tools_are_registered():
         "strata_save_draft",
         "strata_get_latest_draft",
         "strata_search_arxiv",
+        "strata_search_semantic_scholar",
         "strata_save_candidates",
         "strata_list_candidates",
         "strata_approve_candidate",
         "strata_reject_candidate",
+        "strata_scan_repo",
+        "strata_get_repo_snapshot",
     }
     assert expected <= names
     # every tool has a non-empty description (the LLM relies on it)
@@ -246,8 +249,13 @@ def test_fetch_paper_text_dispatch():
     with pytest.raises(ValueError):
         srv.strata_fetch_paper_text("")
     with pytest.raises(ValueError):
-        # a plain web page: no source in this MVP can handle it (arXiv/PDF only)
-        srv.strata_fetch_paper_text("https://example.com/some-web-page")
+        # not a URL / arXiv id / DOI / PDF path — no source can handle it
+        srv.strata_fetch_paper_text("this is not a paper reference at all")
+    # an http(s) page IS handled now (by the web scraper) — it dispatches there
+    # rather than raising "no source"; the actual fetch needs the network so we
+    # only check the source picker here.
+    assert srv._pick_source("https://example.org/papers/42", None).name == "web"
+    assert srv._pick_source("10.1145/3292500.3330701", None).name == "semantic_scholar"
 
 
 def test_fetch_and_stage_round_trips_raw_text_via_staging(

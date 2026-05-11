@@ -28,13 +28,16 @@ from mcp.server.fastmcp import FastMCP
 
 from strata_mcp import __version__
 from strata_mcp.adapters.arxiv import ArxivSource
+from strata_mcp.adapters.github_repo import GithubRepoSource
 from strata_mcp.adapters.pdf_extractor import PdfSource
+from strata_mcp.adapters.semantic_scholar import SemanticScholarSource
 from strata_mcp.adapters.sqlite_storage import (
     DEFAULT_DB_PATH,
     MAX_INGEST_ATTEMPTS_DEFAULT,
     STALE_QUEUE_MINUTES_DEFAULT,
     SqliteStorage,
 )
+from strata_mcp.adapters.web_scraper import WebScraperSource
 from strata_mcp.core.entities import (
     Candidate,
     Paper,
@@ -303,7 +306,9 @@ def strata_mark_failed(
 # --------------------------------------------------------------------------- #
 # Fetching paper text (no LLM)
 # --------------------------------------------------------------------------- #
-_PAPER_SOURCES = (ArxivSource(), PdfSource())
+# Dispatch order matters: arXiv and PDF first, then Semantic Scholar (DOI /
+# CorpusID / S2 paperId), then the generic web scraper as the http(s) catch-all.
+_PAPER_SOURCES = (ArxivSource(), PdfSource(), SemanticScholarSource(), WebScraperSource())
 
 
 def _pick_source(ref: str, hint: str | None):
@@ -319,8 +324,8 @@ def _pick_source(ref: str, hint: str | None):
         chosen = next((s for s in _PAPER_SOURCES if s.can_handle(ref)), None)
     if chosen is None:
         raise ValueError(
-            f"no paper source can handle {ref!r} (this MVP supports arXiv ids/URLs and PDF "
-            "files/URLs; web pages, DOIs and Semantic Scholar are v1)"
+            f"no paper source can handle {ref!r} (supported: arXiv ids/URLs, PDF files/URLs, "
+            "DOIs / CorpusID / Semantic Scholar ids, and generic http(s) paper pages)"
         )
     return chosen
 
@@ -543,15 +548,28 @@ def strata_get_latest_draft(project_id: str, section: str | None = None) -> dict
 
 
 # --------------------------------------------------------------------------- #
-# Scout: arXiv search + candidates
+# Scout: paper search + candidates
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 def strata_search_arxiv(query: str, max_results: int = 20) -> dict:
     """Search arXiv for papers. Returns ``{query, hits:[{title, abstract,
     authors, year, arxiv_id, doi, url, source}], error}``. Use this in the scout
-    phase, then rank and ``strata_save_candidates``. (Semantic Scholar search is
-    v1.)"""
+    phase, then dedupe across queries, drop what's already in the library, rank
+    0-10, and ``strata_save_candidates``. See also
+    ``strata_search_semantic_scholar`` for a second source."""
     result = ArxivSource().search(query, max_results=max_results)
+    return _d(result)
+
+
+@mcp.tool()
+def strata_search_semantic_scholar(query: str, max_results: int = 20) -> dict:
+    """Search Semantic Scholar (Graph API) for papers. Same shape as
+    ``strata_search_arxiv``. The public API is keyless and heavily rate-limited
+    (~1 req/s) — on a 429/quota error this returns ``{query, hits:[], error}``
+    instead of failing, so a scout run still completes on the arXiv results
+    alone. Merge + dedupe the two sources by arXiv id / DOI / normalised title
+    before ranking."""
+    result = SemanticScholarSource().search(query, max_results=max_results)
     return _d(result)
 
 
@@ -617,6 +635,43 @@ def strata_reject_candidate(candidate_id: str) -> dict:
     """Reject a scout candidate (mark it ``rejected``)."""
     get_storage().set_candidate_status(candidate_id, "rejected")
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Repo introspection (layered raw data; Claude summarises it into gap/draft)
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def strata_scan_repo(project_id: str, repo_url: str | None = None) -> dict:
+    """Introspect the project's code repository and store the snapshot. ``repo_url``
+    may be a GitHub URL (``github.com/owner/repo``, with ``@branch`` / ``/tree/branch``
+    / ``git@`` forms) or a local checkout path; if omitted, the project's saved
+    ``repo_url`` is used. Returns ``layers`` = {layer1: readme/tree/pending +
+    description/language/topics, layer2: agents (classes, docstring, source
+    snippet), layer3: benchmark/eval/e2e files + result JSONs, layer4: dataset
+    paths + small config files}. A private repo with no token (``$GITHUB_TOKEN``
+    / ``gh auth token``) degrades to ``layers={"error": ...}`` — it never raises.
+    This is raw data; the gap-analysis / draft skills summarise it, they don't
+    paste it verbatim."""
+    storage = get_storage()
+    project = storage.get_project(project_id)
+    if project is None:
+        raise ValueError(f"no such project: {project_id!r}")
+    ref = (repo_url or project.repo_url or "").strip()
+    if not ref:
+        raise ValueError(
+            f"no repo to scan: pass repo_url, or set the project's repo_url first ({project_id})"
+        )
+    snapshot = GithubRepoSource().scan(ref, project_id)
+    storage.save_repo_snapshot(snapshot)
+    return _d(snapshot)
+
+
+@mcp.tool()
+def strata_get_repo_snapshot(project_id: str) -> dict | None:
+    """The stored repo snapshot for a project (from the last ``strata_scan_repo``),
+    or ``null`` if none yet."""
+    snap = get_storage().get_repo_snapshot(project_id)
+    return _d(snap) if snap else None
 
 
 # --------------------------------------------------------------------------- #
