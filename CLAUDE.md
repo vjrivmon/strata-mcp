@@ -137,10 +137,11 @@ stubs. **Server**: FastMCP stdio server exposing the `strata_*` tools (34 incl.
 `strata_fetch_and_stage`), storage wired from `$STRATA_DB`. **install.sh**: venv
 + register the MCP server in `~/.claude.json` + symlink skills/command
 (idempotent; already run against the real `~/.claude.json`). **`commands/strata.md`**:
-the real phased flow. **Skills**: `analyze-paper`, `gap-analysis`, `draft-paper`
-are real; the other four (`relevance-analysis`, `literature-review`, `scout`,
-`citation-qa`) are v1 placeholders. 137 tests pass, ~93% coverage (core 100%);
-CI (ruff + pytest, py3.10/3.12) green. Templates
-(`templates/{lncs,ieee,acm,inted,generic}/`) and `scripts/migrate_supabase.py`
-are still empty/stub (v1). Pending v1: the stub adapters + skills, templates, the
-Supabase migration, strata-hub integration.
+the real phased flow. **Skills**: all seven are real — `analyze-paper`,
+`relevance-analysis`, `gap-analysis`, `scout`, `literature-review`, `draft-paper`,
+`citation-qa` (the last four distilled from the prompts in the old
+`apps/backend/domain/agents/*.py`). 137 tests pass, ~93% coverage (core 100%);
+CI (ruff + pytest, py3.10/3.12) green. Still v1: the stub adapters
+(`semantic_scholar` / `web_scraper` / `github_repo`), the paper templates
+(`templates/{lncs,ieee,acm,inted,generic}/` — only `.gitkeep`), and
+`scripts/migrate_supabase.py`. Pending v1: those + strata-hub integration.

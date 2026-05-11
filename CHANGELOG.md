@@ -19,13 +19,27 @@ All notable changes to strata-mcp are recorded here. This project follows
   URL isn't a paper, the PDF is scanned/encrypted) instead of cycling it back to
   `pending` until the attempts cap.
 
+- **Four real skills**, distilled from the prompts in the old
+  `apps/backend/domain/agents/*.py` (they shipped as placeholders in 0.1.0):
+  `relevance-analysis` (per-paper `context_analysis` + 0-10 score, from
+  `context_agent.py`), `literature-review` (themed related-work narrative + a
+  per-paper card — résumé / what they propose / how they evaluate / differences
+  with the project — in the author's voice, from `literature_review_agent.py`),
+  `scout` (6 search queries: 2 technical / 2 domain / 2 evaluation → arXiv search
+  → dedupe → drop what's already in the library → rank 0-10 with a one-line
+  reason, from `scout_agent.py` + `search_agent.py`), `citation-qa` (pre-export
+  audit: dangling/hallucinated citations, untraceable figures, empty sections,
+  placeholders, template reference-format, global coherence — reports, doesn't
+  fix; from `citation_agent.py` + `qa_agent.py`).
+
 ### Changed
 - HTTP plumbing (User-Agent with `STRATA_CONTACT_EMAIL`, `STRATA_HTTP_TIMEOUT`,
   retry-with-backoff GET) moved into a shared `strata_mcp.adapters._http`
   module; the arXiv and PDF adapters now both build on it (the PDF extractor no
   longer imports private helpers from the arXiv adapter).
 - The `analyze-paper` skill and the `/strata` command document the staged-text
-  flow and the `permanent` failure flag.
+  flow and the `permanent` failure flag; the `/strata` phase table no longer
+  marks the relevance/lit-review/scout/QA skills as stubs.
 
 ## [0.1.0] — 2026-05-10
 

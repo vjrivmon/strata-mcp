@@ -29,12 +29,12 @@ en la sesión (Opus/Sonnet).
 |---|---|---|---|---|
 | 0 | Setup | Definir el proyecto. | Claude (mini-socrático) | `strata_create_project` |
 | 1 | Biblioteca | Encolar papers y drenar la cola con subagentes Haiku. | Subagentes Haiku | skill `analyze-paper` |
-| 2 | Relevancia | `context_analysis` por paper × proyecto. | Claude | skill `relevance-analysis` (v1), `strata_save_context` |
+| 2 | Relevancia | `context_analysis` por paper × proyecto. | Claude | skill `relevance-analysis`, `strata_save_context` |
 | 3 | Gap | Cruzar Round2 + context + research_question (+ repo) → gap. | Claude | skill `gap-analysis`, `strata_save_gap` |
 | 4 | Scout | Diseñar queries → buscar arXiv → rankear → candidatos. | Claude | skill `scout`, `strata_search_arxiv`, `strata_save_candidates` |
-| 5 | Lit Review | Related work / estado del arte desde la biblioteca. | Claude | skill `literature-review` (v1), `strata_save_literature_review` |
+| 5 | Lit Review | Related work / estado del arte desde la biblioteca. | Claude | skill `literature-review`, `strata_save_literature_review` |
 | 6 | Draft | Redactar el paper sección a sección. | Claude | skill `draft-paper`, `strata_save_draft` |
-| 7 | QA | Verificar citas, anti-alucinación, formato de refs. | Claude | skill `citation-qa` (v1) |
+| 7 | QA | Verificar citas, anti-alucinación, formato de refs. | Claude | skill `citation-qa` |
 | 8 | Export | Generar `.tex`/`.md` final con bibliografía según template. | Claude | `strata_get_latest_draft` + escribir archivo |
 | 9 | Iteración | Añadir papers, regenerar secciones, re-scout. | — | — |
 
@@ -76,16 +76,16 @@ Guarda el `id` devuelto — es el `project_id` de aquí en adelante.
 
 ### Fases 2-5 (resumen)
 
-- **2 Relevancia** *(v1: la skill `relevance-analysis` es un stub)*: para cada
-  paper, tú produces `{contribution_to_project, gaps_covered[], gaps_not_covered[], relevance_score}`
+- **2 Relevancia**: aplica la skill **`relevance-analysis`** — para cada paper,
+  `{contribution_to_project, gaps_covered[], gaps_not_covered[], relevance_score}`
   a partir de su Round2 + la `research_question`, y `strata_save_context(...)`.
 - **3 Gap**: aplica la skill **`gap-analysis`**. Termina en `strata_save_gap`.
-- **4 Scout**: aplica la skill **`scout`** *(v1: solo arXiv; Semantic Scholar y
-  la introspección de repo llegan después)*. `strata_search_arxiv` → rankea →
-  `strata_save_candidates`. El usuario aprueba/rechaza:
+- **4 Scout**: aplica la skill **`scout`** *(de momento solo arXiv; Semantic
+  Scholar y la introspección de repo llegan en v1)*. `strata_search_arxiv` →
+  rankea → `strata_save_candidates`. El usuario aprueba/rechaza:
   `strata_approve_candidate` (re-encola a Fase 1) / `strata_reject_candidate`.
-- **5 Lit Review** *(v1: skill stub)*: related work desde la biblioteca →
-  `strata_save_literature_review`.
+- **5 Lit Review**: aplica la skill **`literature-review`** — related work /
+  estado del arte desde la biblioteca → `strata_save_literature_review`.
 
 ### Fase 6 — Draft
 
@@ -97,9 +97,10 @@ anti-alucinación obligatorio: solo citas a papers de la biblioteca. Al terminar
 
 ### Fases 7-9 (resumen)
 
-- **7 QA** *(v1: skill `citation-qa` stub)*: revisa el último draft contra la
-  biblioteca y el template; reporta citas colgantes, cifras no trazables, formato
-  incorrecto. No "arregles" el draft, repórtalo y deja que el usuario decida.
+- **7 QA**: aplica la skill **`citation-qa`** — revisa el último draft contra la
+  biblioteca y el template; reporta citas colgantes, cifras no trazables, secciones
+  flojas, formato incorrecto. No "arregles" el draft, repórtalo (el usuario decide;
+  para corregir, se vuelve a la Fase 6 a regenerar la sección).
 - **8 Export**: `strata_get_latest_draft(project_id)` → conviértelo al formato
   del template (refs numéricas IEEE/ACM, autor-año LNCS/INTED) y escribe el
   `.tex`/`.md` final en el directorio del proyecto, con su bibliografía.
